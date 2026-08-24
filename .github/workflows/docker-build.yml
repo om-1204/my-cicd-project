@@ -5,89 +5,189 @@ on:
     branches:
       - master
 
+  workflow_dispatch:
+
 jobs:
 
+  # ============================================================
+  # CONTINUOUS INTEGRATION
+  # ============================================================
+
   ci:
-    name: Continuous Integration (CI)
-    runs-on: ubuntu-latest
+    name: Continuous Integration
+    runs-on: self-hosted
 
     steps:
+
+      # --------------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------------
+
       - name: Checkout Code
         uses: actions/checkout@v4
-      
-      - name: Run Gitleaks Scan
-        uses: gitleaks/gitleaks-action@v2
 
+
+      # --------------------------------------------------------
+      # 2. Check Docker
+      # --------------------------------------------------------
+
+      - name: Check Docker
+        run: |
+          docker --version
+          docker info
+
+
+      # --------------------------------------------------------
+      # 3. Install Backend Dependencies
+      # --------------------------------------------------------
 
       - name: Install Backend Dependencies
+        working-directory: backend
         run: |
-          cd backend
-          npm install
+          npm ci
 
-      - name: Run Lint
+
+      # --------------------------------------------------------
+      # 4. Run Backend Lint
+      # --------------------------------------------------------
+
+      - name: Run Backend Lint
+        working-directory: backend
         run: |
-          cd backend
           npm run lint
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Frontend Image
-        run: |
-          docker build \
-          -t jadeja123/frontend:latest \
-          ./frontend
+      # --------------------------------------------------------
+      # 5. Build Frontend Docker Image
+      # --------------------------------------------------------
 
-      - name: Push Frontend Image
+      - name: Build Frontend Docker Image
         run: |
-          docker push \
-          ${{ secrets.DOCKER_USERNAME }}/frontend:latest
+          docker build `
+            -t frontend:latest `
+            ./frontend
 
-      - name: Build Backend Image
-        run: |
-          docker build \
-          -t ${{ secrets.DOCKER_USERNAME }}/backend:latest \
-          ./backend
 
-      - name: Push Backend Image
+      # --------------------------------------------------------
+      # 6. Build Backend Docker Image
+      # --------------------------------------------------------
+
+      - name: Build Backend Docker Image
         run: |
-          docker push \
-          ${{ secrets.DOCKER_USERNAME }}/backend:latest
+          docker build `
+            -t backend:latest `
+            ./backend
+
+
+      # --------------------------------------------------------
+      # 7. Show Docker Images
+      # --------------------------------------------------------
+
+      - name: Verify Docker Images
+        run: |
+          docker images
+
+
+  # ============================================================
+  # CONTINUOUS DEPLOYMENT
+  # ============================================================
 
   cd:
-    name: Continuous Deployment (CD)
-    runs-on: ubuntu-latest
+    name: Continuous Deployment
+    runs-on: self-hosted
 
-    environment: production1     
     needs: ci
 
     steps:
 
-      - name: Deploy to Server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            docker pull jadeja123/frontend:latest
-            docker pull jadeja123/backend:latest
+      # --------------------------------------------------------
+      # 1. Checkout Code
+      # --------------------------------------------------------
 
-            docker stop frontend || true
-            docker rm frontend || true
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-            docker stop backend || true
-            docker rm backend || true
 
-            docker run -d \
-              --name backend \
-              -p 5000:5000 \
-              jadeja123/backend:latest
+      # --------------------------------------------------------
+      # 2. Stop Existing Backend Container
+      # --------------------------------------------------------
 
-            docker run -d \
-              --name frontend \
-              -p 80:80 \
-              jadeja123/frontend:latest
+      - name: Stop Existing Backend
+        run: |
+          docker stop backend 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Backend container is not running"
+          }
+
+          docker rm backend 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Backend container does not exist"
+          }
+
+
+      # --------------------------------------------------------
+      # 3. Stop Existing Frontend Container
+      # --------------------------------------------------------
+
+      - name: Stop Existing Frontend
+        run: |
+          docker stop frontend 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Frontend container is not running"
+          }
+
+          docker rm frontend 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Frontend container does not exist"
+          }
+
+
+      # --------------------------------------------------------
+      # 4. Start Backend Container
+      # --------------------------------------------------------
+
+      - name: Start Backend Container
+        run: |
+          docker run -d `
+            --name backend `
+            -p 5000:5000 `
+            backend:latest
+
+
+      # --------------------------------------------------------
+      # 5. Start Frontend Container
+      # --------------------------------------------------------
+
+      - name: Start Frontend Container
+        run: |
+          docker run -d `
+            --name frontend `
+            -p 80:80 `
+            frontend:latest
+
+
+      # --------------------------------------------------------
+      # 6. Check Running Containers
+      # --------------------------------------------------------
+
+      - name: Verify Containers
+        run: |
+          docker ps
+
+
+      # --------------------------------------------------------
+      # 7. Check Backend Logs
+      # --------------------------------------------------------
+
+      - name: Check Backend Logs
+        run: |
+          docker logs --tail 50 backend
+
+
+      # --------------------------------------------------------
+      # 8. Check Frontend Logs
+      # --------------------------------------------------------
+
+      - name: Check Frontend Logs
+        run: |
+          docker logs --tail 50 frontend
